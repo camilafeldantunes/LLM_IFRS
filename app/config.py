@@ -5,7 +5,7 @@ load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 VISION_MODEL = os.getenv("VISION_MODEL", "gpt-4o")
-TEXT_MODEL = os.getenv("TEXT_MODEL", "gpt-4o")
+TEXT_MODEL = os.getenv("TEXT_MODEL", "gpt-4o-mini")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
 CHROMA_DIR = os.getenv("CHROMA_DIR", "data/chroma")
