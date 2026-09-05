@@ -1,0 +1,55 @@
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Variáveis de ambiente
+.env
+.env.*
+!.env.example
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Bancos de dados locais
+*.db
+*.sqlite
+*.sqlite3
+
+# Arquivos temporários
+*.tmp
+*.temp
+
+# Cache
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# Dados locais / RAG
+data/
+documents/
+chroma/
+qdrant_storage/
+vectorstore/
+storage/
+
+# Arquivos gerados
+outputs/
+results/
