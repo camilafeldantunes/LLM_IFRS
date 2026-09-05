@@ -1,37 +1,61 @@
-"""
-Módulo de reconhecimento visual de resíduos.
-
-Estratégia atual (Opção A do esqueleto): usar um VLM (modelo multimodal
-da OpenAI, ex. GPT-4o) diretamente para identificar o objeto e sugerir
-a categoria de descarte.
-
-Se depois você quiser mais precisão, plugue aqui um detector dedicado
-(ex.: YOLOv8 fine-tunado em TACO/TrashNet) ANTES de chamar o VLM, e passe
-o recorte + a classe detectada como contexto extra no prompt abaixo.
-"""
 import base64
+import io
 import json
+from PIL import Image
 from openai import OpenAI
 
 from app.config import OPENAI_API_KEY, VISION_MODEL, CATEGORIAS_RESIDUOS
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# Tamanho máximo (lado maior) da imagem enviada ao modelo. Fotos de celular
+# costumam vir em 3000-4000px, o que aumenta MUITO o custo em tokens no
+# GPT-4o sem melhorar a classificação de um objeto de descarte.
+MAX_DIMENSAO = 1024
+QUALIDADE_JPEG = 80
+
 CLASSIFICATION_PROMPT = f"""
-Você é um classificador de resíduos sólidos. Olhe a imagem enviada e identifique
+Você é um classificador especializado em resíduos sólidos. Analise a imagem enviada e identifique
 o objeto principal descartado.
 
-Categorias possíveis: {", ".join(CATEGORIAS_RESIDUOS)}
+Categorias permitidas: {", ".join(CATEGORIAS_RESIDUOS)}
 
-Responda APENAS em JSON válido, sem markdown, seguindo este formato exato:
+Responda ESTRITAMENTE em formato JSON com as seguintes chaves:
 {{
-  "objeto": "nome curto do objeto identificado",
-  "categoria": "uma das categorias da lista acima",
-  "confianca": "alta" | "media" | "baixa",
-  "observacoes": "detalhes relevantes, ex: sujidade, se está quebrado, se é composto por múltiplos materiais",
-  "materiais_mistos": true | false
+  "objeto": "nome curto do objeto",
+  "categoria": "uma das categorias da lista",
+  "confianca": "alta | media | baixa",
+  "observacoes": "detalhes como sujeira, avarias ou materiais mistos",
+  "materiais_mistos": true ou false
 }}
 """
+
+
+def _redimensionar_imagem(image_bytes: bytes) -> tuple[bytes, str]:
+    """
+    Reduz a imagem para no máximo MAX_DIMENSAO no lado maior e recomprime
+    como JPEG, para diminuir o custo em tokens da API de visão. Retorna os
+    bytes já processados e o novo media_type.
+    """
+    try:
+        imagem = Image.open(io.BytesIO(image_bytes))
+        imagem = imagem.convert("RGB")  # remove canal alpha/CMYK, garante JPEG válido
+
+        largura, altura = imagem.size
+        maior_lado = max(largura, altura)
+        if maior_lado > MAX_DIMENSAO:
+            escala = MAX_DIMENSAO / maior_lado
+            nova_largura = int(largura * escala)
+            nova_altura = int(altura * escala)
+            imagem = imagem.resize((nova_largura, nova_altura), Image.LANCZOS)
+
+        buffer = io.BytesIO()
+        imagem.save(buffer, format="JPEG", quality=QUALIDADE_JPEG, optimize=True)
+        return buffer.getvalue(), "image/jpeg"
+    except Exception:
+        # Se por algum motivo não der pra processar (formato estranho etc.),
+        # manda a imagem original em vez de quebrar a classificação.
+        return image_bytes, "image/jpeg"
 
 
 def _image_to_base64(image_bytes: bytes) -> str:
@@ -40,57 +64,44 @@ def _image_to_base64(image_bytes: bytes) -> str:
 
 def classify_image(image_bytes: bytes, media_type: str = "image/jpeg") -> dict:
     """
-    Recebe os bytes de uma imagem (ou de um frame extraído de vídeo)
-    e retorna a classificação estruturada do resíduo.
+    Recebe os bytes de uma imagem e retorna a classificação estruturada.
     """
+    image_bytes, media_type = _redimensionar_imagem(image_bytes)
     image_b64 = _image_to_base64(image_bytes)
 
-    response = client.chat.completions.create(
-        model=VISION_MODEL,
-        max_tokens=500,
-        response_format={"type": "json_object"},
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": CLASSIFICATION_PROMPT},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{media_type};base64,{image_b64}"
-                        },
-                    },
-                ],
-            }
-        ],
-    )
-
-    raw_text = response.choices[0].message.content.strip()
-
     try:
+        response = client.chat.completions.create(
+            model=VISION_MODEL,
+            max_tokens=500,
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": CLASSIFICATION_PROMPT},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{media_type};base64,{image_b64}",
+                                # "low" mantém custo fixo e baixo (~85 tokens);
+                                # suficiente para reconhecer o objeto principal
+                                # de uma foto já redimensionada.
+                                "detail": "low",
+                            },
+                        },
+                    ],
+                }
+            ],
+        )
+
+        raw_text = response.choices[0].message.content.strip()
         return json.loads(raw_text)
-    except json.JSONDecodeError:
+
+    except Exception as e:
         return {
             "objeto": "desconhecido",
             "categoria": "rejeito (não reciclável)",
             "confianca": "baixa",
-            "observacoes": f"Falha ao interpretar resposta do modelo: {raw_text}",
+            "observacoes": f"Erro na análise de imagem: {str(e)}",
             "materiais_mistos": False,
         }
-
-
-def classify_video_frames(frames_bytes: list[bytes], media_type: str = "image/jpeg") -> dict:
-    """
-    Recebe uma lista de frames (já extraídos do vídeo, ex. 1 a cada 2s)
-    e retorna a classificação mais frequente/confiável entre eles.
-
-    Extração de frames fica fora deste módulo (ex.: com ffmpeg/opencv),
-    para manter este arquivo focado só na parte de IA.
-    """
-    resultados = [classify_image(f, media_type) for f in frames_bytes]
-
-    # Estratégia simples: pega a classificação de maior confiança.
-    ordem_confianca = {"alta": 3, "media": 2, "baixa": 1}
-    melhor = max(resultados, key=lambda r: ordem_confianca.get(r.get("confianca", "baixa"), 0))
-    melhor["frames_analisados"] = len(frames_bytes)
-    return melhor

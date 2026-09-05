@@ -5,3 +5,9 @@ pydantic
 openai
 chromadb
 python-dotenv
+haystack-ai
+chroma-haystack
+streamlit
+openai
+python-dotenv
+pydantic

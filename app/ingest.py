@@ -1,96 +1,71 @@
-"""
-Script de ingestão da base de conhecimento (RAG).
-
-Coloque seus documentos (legislação, manuais de coleta seletiva,
-guias municipais, PDFs convertidos em .txt/.md, etc.) em data/docs/
-e rode:
-
-    python -m app.ingest
-
-Isso quebra os textos em chunks, gera embeddings via OpenAI e indexa
-no ChromaDB.
-"""
 import os
 import glob
-import uuid
-
-import chromadb
-from openai import OpenAI
+from haystack import Pipeline, Document
+from haystack.components.preprocessors import DocumentSplitter
+from haystack.components.embedders import OpenAIDocumentEmbedder
+from haystack.components.writers import DocumentWriter
+from haystack.document_stores.types import DuplicatePolicy
+from haystack.utils import Secret
+from haystack_integrations.document_stores.chroma import ChromaDocumentStore
 
 from app.config import (
     OPENAI_API_KEY,
     CHROMA_DIR,
     COLLECTION_NAME,
     EMBEDDING_MODEL,
-    CHUNK_SIZE,
-    CHUNK_OVERLAP,
 )
 
 DOCS_DIR = "data/docs"
-client = OpenAI(api_key=OPENAI_API_KEY)
 
+def indexar():
+    print("Iniciando ingestão com Haystack 2.x...")
 
-def carregar_textos() -> list[dict]:
-    """Lê todos os .txt/.md de data/docs e retorna [{'texto':..., 'fonte':...}]"""
+    # 1. Instância do banco vetorial Chroma
+    document_store = ChromaDocumentStore(
+        persist_path=CHROMA_DIR,
+        collection_name=COLLECTION_NAME
+    )
+
+    # 2. Leitura dos arquivos locais
     arquivos = glob.glob(os.path.join(DOCS_DIR, "**/*.txt"), recursive=True) + \
-        glob.glob(os.path.join(DOCS_DIR, "**/*.md"), recursive=True)
+              glob.glob(os.path.join(DOCS_DIR, "**/*.md"), recursive=True)
+
+    if not arquivos:
+        print("Nenhum arquivo .txt ou .md encontrado em data/docs.")
+        return
 
     documentos = []
     for caminho in arquivos:
         with open(caminho, "r", encoding="utf-8") as f:
-            documentos.append({"texto": f.read(), "fonte": os.path.basename(caminho)})
-    return documentos
+            documentos.append(
+                Document(content=f.read(), meta={"fonte": os.path.basename(caminho)})
+            )
 
+    # 3. Construção e conexão do Pipeline
+    indexing_pipeline = Pipeline()
 
-def dividir_em_chunks(texto: str, tamanho: int = CHUNK_SIZE, sobreposicao: int = CHUNK_OVERLAP) -> list[str]:
-    """Divisão simples por caracteres com sobreposição. Troque por um splitter
-    mais robusto se preferir."""
-    chunks = []
-    inicio = 0
-    while inicio < len(texto):
-        fim = inicio + tamanho
-        chunks.append(texto[inicio:fim])
-        inicio += tamanho - sobreposicao
-    return [c.strip() for c in chunks if c.strip()]
-
-
-def gerar_embeddings(textos: list[str]) -> list[list[float]]:
-    """Chama a API de embeddings da OpenAI em lote."""
-    response = client.embeddings.create(model=EMBEDDING_MODEL, input=textos)
-    return [item.embedding for item in response.data]
-
-
-def indexar():
-    print("Carregando documentos de", DOCS_DIR)
-    documentos = carregar_textos()
-    if not documentos:
-        print("Nenhum documento encontrado em data/docs. Adicione .txt/.md e rode novamente.")
-        return
-
-    chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
-    collection = chroma_client.get_or_create_collection(COLLECTION_NAME)
-
-    total_chunks = 0
-    for doc in documentos:
-        chunks = dividir_em_chunks(doc["texto"])
-        if not chunks:
-            continue
-
-        embeddings = gerar_embeddings(chunks)
-        ids = [str(uuid.uuid4()) for _ in chunks]
-        metadatas = [{"fonte": doc["fonte"]} for _ in chunks]
-
-        collection.add(
-            ids=ids,
-            embeddings=embeddings,
-            documents=chunks,
-            metadatas=metadatas,
+    indexing_pipeline.add_component("splitter", DocumentSplitter(split_by="word", split_length=200, split_overlap=30))
+    indexing_pipeline.add_component(
+        "embedder",
+        OpenAIDocumentEmbedder(
+            api_key=Secret.from_token(OPENAI_API_KEY),
+            model=EMBEDDING_MODEL
         )
-        total_chunks += len(chunks)
-        print(f"  - {doc['fonte']}: {len(chunks)} chunks indexados")
+    )
+    indexing_pipeline.add_component(
+        "writer",
+        # OVERWRITE evita erro de duplicidade quando você roda a ingestão
+        # mais de uma vez sobre a mesma coleção.
+        DocumentWriter(document_store=document_store, policy=DuplicatePolicy.OVERWRITE)
+    )
 
-    print(f"Concluído. {total_chunks} chunks indexados em '{COLLECTION_NAME}'.")
+    # Conecta as saídas às entradas dos componentes seguintes
+    indexing_pipeline.connect("splitter.documents", "embedder.documents")
+    indexing_pipeline.connect("embedder.documents", "writer.documents")
 
+    # 4. Execução do Pipeline
+    indexing_pipeline.run({"splitter": {"documents": documentos}})
+    print("Indexação concluída com sucesso via Haystack!")
 
 if __name__ == "__main__":
     indexar()

@@ -1,22 +1,10 @@
-"""
-API principal do assistente de resíduos sólidos.
-
-Endpoints:
-- POST /chat            -> pergunta em texto, resposta via RAG
-- POST /classify-image  -> foto do objeto, resposta via visão + RAG
-- GET  /health          -> healthcheck
-
-Rodar localmente:
-    uvicorn app.main:app --reload
-    http://localhost:8000/docs#/default/health_health_get
-"""
 from fastapi import FastAPI, UploadFile, File, Form
 from pydantic import BaseModel
 
 from app.vision import classify_image
 from app.rag import responder
 
-app = FastAPI(title="Assistente de Resíduos Sólidos")
+app = FastAPI(title="Assistente de Resíduos Sólidos - Haystack 2.x")
 
 
 class ChatRequest(BaseModel):
@@ -30,7 +18,7 @@ def health():
 
 @app.post("/chat")
 def chat(payload: ChatRequest):
-    """Pergunta puramente textual (ex: 'como descarto óleo de cozinha?')."""
+    """Pergunta pura em texto usando Haystack RAG."""
     resultado = responder(payload.pergunta)
     return resultado
 
@@ -41,9 +29,8 @@ async def classify_image_endpoint(
     pergunta: str = Form(default="Como devo descartar este objeto corretamente?"),
 ):
     """
-    Recebe uma foto do objeto + pergunta opcional.
-    1) Classifica o objeto via VLM.
-    2) Usa a classificação como contexto para o RAG gerar a orientação final.
+    1) Classifica o objeto via GPT-4o Vision.
+    2) Injeta a classificação na Pipeline Haystack para resposta final.
     """
     image_bytes = await imagem.read()
     media_type = imagem.content_type or "image/jpeg"
@@ -55,10 +42,3 @@ async def classify_image_endpoint(
         "classificacao": classificacao,
         **resultado_rag,
     }
-
-
-# --- Placeholder para vídeo ---
-# Para vídeo, extraia frames antes de chamar a API (ex.: com ffmpeg/opencv no
-# frontend ou num worker separado) e reaproveite /classify-image por frame,
-# ou implemente um endpoint /classify-video que receba múltiplos arquivos
-# e chame app.vision.classify_video_frames().
