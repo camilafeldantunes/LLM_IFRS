@@ -3,6 +3,8 @@ from pathlib import Path
 import streamlit as st
 from vision import classify_image
 from rag import responder
+from historico import registrar
+import uuid
 
 # Requer streamlit >= 1.43 (st.chat_input com accept_file)
 
@@ -32,6 +34,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "classificacao_atual" not in st.session_state:
     st.session_state.classificacao_atual = None
+if "sessao_id" not in st.session_state:
+    st.session_state.sessao_id = uuid.uuid4().hex[:8]
 
 with st.sidebar:
     st.image(AVATAR, width=100)
@@ -82,6 +86,16 @@ if entrada:
                 res = responder(
                     texto, classificacao_visao=st.session_state.classificacao_atual
                 )
+                registrar(
+                    pergunta=texto,
+                    resposta=res["resposta"],
+                    fontes=res.get("fontes"),
+                    classificacao=st.session_state.classificacao_atual,
+                    tem_imagem=bool(imagem_bytes),
+                    origem="streamlit",
+                    sessao_id=st.session_state.sessao_id,
+                )
+
                 resposta_final = prefixo + res["resposta"]
                 if res.get("fontes"):
                     resposta_final += f"\n\n*Fontes: {', '.join(res['fontes'])}*"
