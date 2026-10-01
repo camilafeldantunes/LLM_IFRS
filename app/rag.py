@@ -6,7 +6,7 @@ from haystack.utils import Secret
 from haystack_integrations.components.retrievers.chroma import ChromaEmbeddingRetriever
 from haystack_integrations.document_stores.chroma import ChromaDocumentStore
 
-from app.config import (
+from config import (
     OPENAI_API_KEY,
     TEXT_MODEL,
     CHROMA_DIR,

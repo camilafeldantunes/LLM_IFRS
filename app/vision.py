@@ -4,7 +4,7 @@ import json
 from PIL import Image
 from openai import OpenAI
 
-from app.config import OPENAI_API_KEY, VISION_MODEL, CATEGORIAS_RESIDUOS
+from config import OPENAI_API_KEY, VISION_MODEL, CATEGORIAS_RESIDUOS
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 

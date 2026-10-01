@@ -8,7 +8,7 @@ from haystack.document_stores.types import DuplicatePolicy
 from haystack.utils import Secret
 from haystack_integrations.document_stores.chroma import ChromaDocumentStore
 
-from app.config import (
+from config import (
     OPENAI_API_KEY,
     CHROMA_DIR,
     COLLECTION_NAME,

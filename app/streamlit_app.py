@@ -1,6 +1,6 @@
 import streamlit as st
-from app.vision import classify_image
-from app.rag import responder
+from vision import classify_image
+from rag import responder
 
 
 
