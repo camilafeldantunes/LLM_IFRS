@@ -1,4 +1,4 @@
-# 🌱 CORA — Classificação e Orientação para Resíduos Ambientais
+# 🌱 CORA — Classificação e Orientação para Resíduos Ambientais.
 
 CORA é a assistente virtual do IFRS que ajuda a classificar e destinar corretamente os resíduos sólidos. Com apoio de Inteligência Artificial, ela responde dúvidas por texto, reconhece objetos por foto e orienta o descarte correto com base em uma base de conhecimento própria.
 
