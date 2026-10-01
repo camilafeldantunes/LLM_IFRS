@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 from vision import classify_image
 from rag import responder
+from historico import registrar
 
 app = FastAPI(title="Assistente de Resíduos Sólidos - Haystack 2.x")
 
@@ -20,6 +21,12 @@ def health():
 def chat(payload: ChatRequest):
     """Pergunta pura em texto usando Haystack RAG."""
     resultado = responder(payload.pergunta)
+    registrar(
+        pergunta=payload.pergunta,
+        resposta=resultado["resposta"],
+        fontes=resultado.get("fontes"),
+        origem="api",
+    )
     return resultado
 
 
@@ -37,6 +44,14 @@ async def classify_image_endpoint(
 
     classificacao = classify_image(image_bytes, media_type=media_type)
     resultado_rag = responder(pergunta, classificacao_visao=classificacao)
+    registrar(
+        pergunta=pergunta,
+        resposta=resultado_rag["resposta"],
+        fontes=resultado_rag.get("fontes"),
+        classificacao=classificacao,
+        tem_imagem=True,
+        origem="api",
+    )
 
     return {
         "classificacao": classificacao,
