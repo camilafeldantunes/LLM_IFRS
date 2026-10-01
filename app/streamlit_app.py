@@ -1,71 +1,92 @@
+from pathlib import Path
+
 import streamlit as st
 from vision import classify_image
 from rag import responder
 
+# Requer streamlit >= 1.43 (st.chat_input com accept_file)
 
+AVATAR = str(Path(__file__).parent / "assets" / "cora_avatar.png")
+PERGUNTA_PADRAO = "Como devo descartar este objeto corretamente?"
 
-st.set_page_config(
-    page_title="EcoGuia - Descarte Inteligente",
-    page_icon="♻️",
-    layout="centered"
+st.set_page_config(page_title="CORA", page_icon=AVATAR, layout="centered")
+
+st.markdown(
+    """
+    <style>
+    .stApp { background: #F4F7F1; }
+    .cora-logo { font-size: 2.6rem; font-weight: 900; letter-spacing: 2px;
+                 color: #1F4D36; margin: 0; line-height: 1; }
+    .cora-logo span { color: #5BA34F; }
+    .cora-sub { color: #1F4D36; opacity: .8; margin: .2rem 0 1rem 0; }
+    [data-testid="stChatMessage"] { background: #FFFFFF; border-radius: 18px;
+                                    border: 1px solid #E3EADF; }
+    </style>
+    <p class="cora-logo">C<span>O</span>RA</p>
+    <p class="cora-sub">Como descartar? Pergunte ou envie uma foto.</p>
+    """,
+    unsafe_allow_html=True,
 )
-
-st.title("♻️ EcoGuia - Assistente de Resíduos")
-st.caption("Identifique objetos e descubra a forma correta de descarte.")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "classificacao_cache" not in st.session_state:
-    st.session_state.classificacao_cache = None
-if "classificacao_arquivo_id" not in st.session_state:
-    st.session_state.classificacao_arquivo_id = None
+if "classificacao_atual" not in st.session_state:
+    st.session_state.classificacao_atual = None
 
-# Sidebar para Upload de Imagem
 with st.sidebar:
-    st.header("📸 Análise por Imagem")
-    uploaded_file = st.file_uploader("Envie uma foto do objeto para identificar:", type=["png", "jpg", "jpeg"])
+    st.image(AVATAR, width=100)
+    if st.button("🗑️ Nova conversa", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.classificacao_atual = None
+        st.rerun()
 
-    if uploaded_file:
-        st.image(uploaded_file, caption="Imagem enviada", use_container_width=True)
-        # file_id muda se o usuário trocar de arquivo, mesmo mantendo o nome
-        arquivo_id = f"{uploaded_file.name}-{uploaded_file.size}"
-        if arquivo_id != st.session_state.classificacao_arquivo_id:
-            # Nova imagem: limpa o cache para forçar reclassificação só desta vez
-            st.session_state.classificacao_cache = None
-            st.session_state.classificacao_arquivo_id = arquivo_id
-    else:
-        st.session_state.classificacao_cache = None
-        st.session_state.classificacao_arquivo_id = None
-
-# Exibe o histórico de mensagens
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
+    avatar = AVATAR if message["role"] == "assistant" else None
+    with st.chat_message(message["role"], avatar=avatar):
+        if message.get("image"):
+            st.image(message["image"], width=260)
         st.markdown(message["content"])
 
-# Entrada do usuário
-if prompt := st.chat_input("Ex: Como descarto lâmpadas fluorescentes?"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+entrada = st.chat_input(
+    "Pergunte para a CORA...",
+    accept_file=True,
+    file_type=["png", "jpg", "jpeg"],
+)
 
-    with st.chat_message("assistant"):
-        with st.spinner("Analisando..."):
-            classificacao = None
-            if uploaded_file:
-                if st.session_state.classificacao_cache is not None:
-                    # Já classificamos essa imagem antes nesta sessão — reaproveita.
-                    classificacao = st.session_state.classificacao_cache
-                else:
-                    bytes_data = uploaded_file.getvalue()
-                    classificacao = classify_image(bytes_data, media_type=uploaded_file.type)
-                    st.session_state.classificacao_cache = classificacao
-                st.info(f"**Objeto Identificado:** {classificacao.get('objeto')} ({classificacao.get('categoria')})")
+if entrada:
+    texto = (entrada.text or "").strip()
+    arquivo = entrada.files[0] if entrada.files else None
+    if arquivo and not texto:
+        texto = PERGUNTA_PADRAO
 
-            res = responder(prompt, classificacao_visao=classificacao)
-            
-            resposta_final = res["resposta"]
-            if res.get("fontes"):
-                resposta_final += f"\n\n---\n**Fontes consultadas:** {', '.join(res['fontes'])}"
-            
-            st.markdown(resposta_final)
-            st.session_state.messages.append({"role": "assistant", "content": resposta_final})
+    if texto:
+        imagem_bytes = arquivo.getvalue() if arquivo else None
+        st.session_state.messages.append(
+            {"role": "user", "content": texto, "image": imagem_bytes}
+        )
+        with st.chat_message("user"):
+            if imagem_bytes:
+                st.image(imagem_bytes, width=260)
+            st.markdown(texto)
+
+        with st.chat_message("assistant", avatar=AVATAR):
+            with st.spinner("Analisando..."):
+                prefixo = ""
+                if imagem_bytes:
+                    st.session_state.classificacao_atual = classify_image(
+                        imagem_bytes, media_type=arquivo.type
+                    )
+                    c = st.session_state.classificacao_atual
+                    prefixo = f"🔎 **{c.get('objeto')}** ({c.get('categoria')})\n\n"
+
+                res = responder(
+                    texto, classificacao_visao=st.session_state.classificacao_atual
+                )
+                resposta_final = prefixo + res["resposta"]
+                if res.get("fontes"):
+                    resposta_final += f"\n\n*Fontes: {', '.join(res['fontes'])}*"
+
+                st.markdown(resposta_final)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": resposta_final}
+                )
